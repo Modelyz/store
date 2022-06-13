@@ -1,0 +1,18 @@
+# vim temporary files
+.*\.swp
+
+# build
+build/
+
+# haskell build
+dist-newstyle/
+
+# Data
+data/
+
+# cabam
+cabal.project.local
+
+# docker build args
+.env
+
