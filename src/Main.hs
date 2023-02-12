@@ -23,21 +23,18 @@ import qualified Network.WebSockets as WS
 import Options.Applicative
 
 -- port, file
-data Options = Options String Port FilePath
+data Options = Options FilePath Host Port
 
 type NumClient = Int
+type Host = String
 type Port = Int
-
-portOption :: Parser Port
-portOption =
-    option auto (long "port" <> short 'p' <> metavar "PORT" <> value 8081 <> help "Bind socket to this port.  [default: 8081]")
 
 options :: Parser Options
 options =
     Options
-        <$> strOption (short 'd' <> long "dir" <> value "." <> help "Directory containing the index file and static directory")
-        <*> portOption
-        <*> strOption (short 'f' <> long "file" <> value "messagestore.txt" <> help "Filename of the file containing events")
+        <$> strOption (short 'f' <> long "file" <> value "messagestore.txt" <> help "Filename of the file containing events")
+        <*> strOption (short 'h' <> long "host" <> value "localhost" <> help "Bind socket to this host. [default: localhost]")
+        <*> option auto (short 'p' <> long "port" <> metavar "PORT" <> value 8081 <> help "Bind socket to this port.  [default: 8081]")
 
 wsApp :: FilePath -> Chan (NumClient, Message) -> MVar NumClient -> WS.ServerApp
 wsApp f chan ncMV pending_conn = do
@@ -107,11 +104,11 @@ handleMessage f conn nc msChan ev = do
         writeChan msChan (nc, ev')
 
 serve :: Options -> IO ()
-serve (Options _ p f) = do
+serve (Options f h p) = do
     st <- newMVar 0
     chan <- newChan
     putStrLn $ "Modelyz Store, serving from localhost:" ++ show p ++ "/"
-    WS.runServerWithOptions WS.defaultServerOptions{WS.serverHost = "localhost", WS.serverPort = 8081} (wsApp f chan st)
+    WS.runServerWithOptions WS.defaultServerOptions{WS.serverHost = h, WS.serverPort = p} (wsApp f chan st)
 
 main :: IO ()
 main =
