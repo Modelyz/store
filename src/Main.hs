@@ -17,7 +17,7 @@ import Control.Monad.Fix (fix)
 import qualified Data.Aeson as JSON
 import Data.List ()
 import qualified Data.Text as T
-import Message (Message, getMetaString, getUuids, isType, setProcessed)
+import Message (Message, getMetaString, getUuids, isProcessed, isType, setProcessed)
 import qualified MessageStore as ES
 import qualified Network.WebSockets as WS
 import Options.Applicative
@@ -81,6 +81,13 @@ handleMessage f conn nc msChan ev = do
         putStrLn $ "\nStored this message and broadcast to other microservice threads: " ++ show ev
         -- send the msgs to other connected clients
         writeChan msChan (nc, ev)
+        unless (isType "IdentifierAdded" ev && not (isProcessed ev)) $ do
+            -- Set all messages as processed, except those for Ident which are not processed
+            let ev' = setProcessed ev
+            ES.appendMessage f ev'
+            putStrLn $ "\nStored this message: " ++ show ev'
+            WS.sendTextData conn $ JSON.encode [ev']
+            writeChan msChan (nc, ev')
     -- if the event is a InitiatedConnection, get the uuid list from it,
     -- and send back all the missing events (with an added ack)
     when (isType "InitiatedConnection" ev) $ do
