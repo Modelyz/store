@@ -1,18 +1,10 @@
-cabal-version:      2.4
+cabal-version:      3.4
 name:               modelyz-store
 version:            0.1.0.0
-
--- A short (one-line) description of the package.
--- synopsis:
-
--- A longer description of the package.
+synopsis: Modelyz microservice serving the main event store
 -- description:
-
--- A URL where users can report bugs.
 -- bug-reports:
-
--- The license under which the package is released.
--- license:
+license: AGPL-3.0-or-later
 author:             Christophe Combelles
 maintainer:         ccomb@free.fr
 
@@ -21,19 +13,24 @@ maintainer:         ccomb@free.fr
 -- category:
 extra-source-files: CHANGELOG.md
 
+source-repository head
+    type: git
+    location: https://github.com/Modelyz/store
+
 executable store
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
     other-modules:
-      Event
-      EventStore
+      Message
+      MessageStore
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
+    ghc-options: -Wall
     build-depends:
-        base >=4.13 && <4.14
-        , aeson >= 1.4.7 && < 2.0
+        base >=4.16
+        , aeson >= 2.1
         , bytestring
         , containers
         , http-types
