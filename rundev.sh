@@ -1,3 +1,3 @@
 #!/bin/bash
 
-cabal run store -- -d ../build -f ./messagestore.txt
+cabal run store -- -f ./messagestore.txt
