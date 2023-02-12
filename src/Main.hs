@@ -81,8 +81,8 @@ handleMessage f conn nc msChan ev = do
         putStrLn $ "\nStored this message and broadcast to other microservice threads: " ++ show ev
         -- send the msgs to other connected clients
         writeChan msChan (nc, ev)
-        unless (isType "IdentifierAdded" ev && not (isProcessed ev)) $ do
-            -- Set all messages as processed, except those for Ident which are not processed
+        unless (isType "AddedIdentifier" ev || not (isProcessed ev)) $ do
+            -- Set all messages as processed, except those for Ident or which are not processed
             let ev' = setProcessed ev
             ES.appendMessage f ev'
             putStrLn $ "\nStored this message: " ++ show ev'
