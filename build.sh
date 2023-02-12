@@ -1,20 +1,22 @@
 #!/bin/bash
 
+OPT_DEVEL='--ghc-options="-Wall"'
+OPT_OPTIMIZE=' -O2 --ghc-options="-Wall" --enable-split-objs --enable-executable-stripping --enable-library-stripping --enable-executable-static'
+INSTALLDIR=build
+OPT_INSTALL="--installdir=$INSTALLDIR --overwrite-policy=always --install-method=copy"
+
 set -e
-BUILD="cabal build"
-DEVEL='--ghc-options="-Wall"'
-OPTIMIZE=" -O2 --enable-split-objs --enable-executable-stripping --enable-library-stripping --enable-executable-dynamic"
-DIR="dist-newstyle/build/x86_64-linux/"
 
 pushd $( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-
-mkdir -p build
+mkdir -p $INSTALLDIR
 
 if [ "$1" == "-o" ]; then
-    $BUILD $OPTIMIZE
-    find $DIR -type f -name store -exec cp {} build/ \;
+    # TODO stripping does not work
+    cabal build $OPT_OPTIMIZE
+    cabal install $OPT_OPTIMIZE $OPT_INSTALL
+    #cabal v1-install -O2 --enable-split-objs --enable-executable-static --enable-executable-stripping --bindir=$INSTALLDIR
 else
-    $BUILD $DEVEL
-    find $DIR -type f -name store -exec cp {} build/ \;
+    cabal build $OPT_DEVEL
+    cabal install $OPT_DEVEL $OPT_INSTALL
 fi
 popd
