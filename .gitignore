@@ -16,3 +16,4 @@ cabal.project.local
 # docker build args
 .env
 
+messagestore.txt

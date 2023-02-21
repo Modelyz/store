@@ -1,16 +1,16 @@
 cabal-version:      3.4
 name:               modelyz-store
 version:            0.1.0.0
-synopsis: Modelyz microservice serving the main event store
+synopsis: Main event store for Modelyz
 -- description:
 -- bug-reports:
 license: AGPL-3.0-or-later
-author:             Christophe Combelles
-maintainer:         ccomb@free.fr
-
--- A copyright notice.
+license-file:        LICENSE
+author:              Christophe Combelles
+maintainer:          ccomb@free.fr
 -- copyright:
 -- category:
+build-type:          Simple
 extra-source-files: CHANGELOG.md
 
 source-repository head
@@ -19,11 +19,7 @@ source-repository head
 
 executable store
     main-is:          Main.hs
-
-    -- Modules included in this executable, other than Main.
-    other-modules:
-      Message
-      MessageStore
+    hs-source-dirs:   src
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
@@ -34,6 +30,7 @@ executable store
         , bytestring
         , containers
         , http-types
+        , modelyz-message
         , optparse-applicative
         , scientific
         , text
@@ -45,5 +42,4 @@ executable store
         , wai-websockets
         , warp
         , websockets
-    hs-source-dirs:   src
-    default-language: Haskell2010
+    default-language: GHC2021

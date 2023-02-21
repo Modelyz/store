@@ -15,10 +15,12 @@ import Control.Concurrent (
 import Control.Monad (forever, unless, when)
 import Control.Monad.Fix (fix)
 import qualified Data.Aeson as JSON
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.List ()
+import qualified Data.List as List
+import qualified Data.Map as Map (Map)
 import qualified Data.Text as T
-import Message (Message, getMetaString, getUuids, isProcessed, isType, setProcessed)
-import qualified MessageStore as ES
+import Message (Message, appendMessage, getMetaString, getUuids, isProcessed, isType, readMessages, setFlow)
 import qualified Network.WebSockets as WS
 import Options.Applicative
 
@@ -28,6 +30,8 @@ data Options = Options FilePath Host Port
 type NumClient = Int
 type Host = String
 type Port = Int
+
+type Pending = Map.Map Int Message
 
 options :: Parser Options
 options =
@@ -74,25 +78,26 @@ wsApp f chan ncMV pending_conn = do
                 Nothing -> sequence [putStrLn "\nError decoding incoming message"]
 
 handleMessage :: FilePath -> WS.Connection -> NumClient -> Chan (NumClient, Message) -> Message -> IO ()
-handleMessage f conn nc msChan ev = do
+handleMessage f conn nc msChan msg = do
     -- first store eveything except the connection initiation
-    unless (isType "InitiatedConnection" ev) $ do
-        ES.appendMessage f ev
-        putStrLn $ "\nStored this message and broadcast to other microservice threads: " ++ show ev
+    unless (isType "InitiatedConnection" msg) $ do
+        appendMessage f msg
+        WS.sendTextData conn $ JSON.encode $ KeyMap.singleton "messages" $ List.singleton (setFlow "Sent" msg)
+        putStrLn $ "\nStored this message and broadcast to other microservice threads: " ++ show msg
         -- send the msgs to other connected clients
-        writeChan msChan (nc, ev)
-        unless (isType "AddedIdentifier" ev || isProcessed ev) $ do
+        writeChan msChan (nc, msg)
+        unless (isType "AddedIdentifier" msg || isProcessed msg) $ do
             -- Set all messages as processed, except those for Ident or are already processed
-            let ev' = setProcessed ev
-            ES.appendMessage f ev'
-            putStrLn $ "\nStored this message: " ++ show ev'
-            WS.sendTextData conn $ JSON.encode [ev']
-            writeChan msChan (nc, ev')
+            let msg' = setFlow "Sent" msg
+            appendMessage f msg'
+            putStrLn $ "\nStored this message: " ++ show msg'
+            WS.sendTextData conn $ JSON.encode [msg']
+            writeChan msChan (nc, msg')
     -- if the event is a InitiatedConnection, get the uuid list from it,
     -- and send back all the missing events (with an added ack)
-    when (isType "InitiatedConnection" ev) $ do
-        let uuids = getUuids ev
-        esevs <- ES.readMessages f
+    when (isType "InitiatedConnection" msg) $ do
+        let uuids = getUuids msg
+        esevs <- readMessages f
         let evs =
                 filter
                     ( \e -> case getMetaString "uuid" e of
@@ -104,11 +109,11 @@ handleMessage f conn nc msChan ev = do
         putStrLn $ "\nSent all missing " ++ show (length evs) ++ " messsages to client " ++ show nc
         -- Send back and store an ACK to let the client know the message has been stored
         -- Except for events that should be handled by another service
-        let ev' = setProcessed ev
-        ES.appendMessage f ev'
-        putStrLn $ "\nStored this message: " ++ show ev'
-        WS.sendTextData conn $ JSON.encode [ev']
-        writeChan msChan (nc, ev')
+        let msg' = setFlow "Sent" msg
+        appendMessage f msg'
+        putStrLn $ "\nStored this message: " ++ show msg'
+        WS.sendTextData conn $ JSON.encode [msg']
+        writeChan msChan (nc, msg')
 
 serve :: Options -> IO ()
 serve (Options f h p) = do
