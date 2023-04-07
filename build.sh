@@ -3,12 +3,14 @@
 OPT_DEVEL='--ghc-options="-Wall"'
 OPT_OPTIMIZE=' -O2 --ghc-options="-Wall" --enable-split-objs --enable-executable-stripping --enable-library-stripping --enable-executable-static'
 INSTALLDIR=build
+DATADIR=data
 OPT_INSTALL="--installdir=$INSTALLDIR --overwrite-policy=always --install-method=copy"
 
 set -e
 
 pushd $( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 mkdir -p $INSTALLDIR
+mkdir -p $DATADIR
 
 if [ "$1" == "-o" ]; then
     # TODO stripping does not work

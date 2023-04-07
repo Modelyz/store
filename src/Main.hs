@@ -14,29 +14,32 @@ import Control.Concurrent (
  )
 import Control.Monad (forever, unless, when)
 import Control.Monad.Fix (fix)
-import qualified Data.Aeson as JSON
-import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson qualified as JSON
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.List ()
-import qualified Data.List as List
-import qualified Data.Map as Map (Map)
-import qualified Data.Text as T
+import Data.List qualified as List
+import Data.Map qualified as Map (Map)
+import Data.Text qualified as T
 import Message (Message, appendMessage, getMetaString, getUuids, isProcessed, isType, readMessages, setFlow)
-import qualified Network.WebSockets as WS
+import Network.WebSockets qualified as WS
 import Options.Applicative
 
 -- port, file
 data Options = Options FilePath Host Port
 
 type NumClient = Int
+
 type Host = String
+
 type Port = Int
 
+-- TODO
 type Pending = Map.Map Int Message
 
 options :: Parser Options
 options =
     Options
-        <$> strOption (short 'f' <> long "file" <> value "messagestore.txt" <> help "Filename of the file containing events")
+        <$> strOption (short 'f' <> long "file" <> value "data/messagestore.txt" <> help "Filename of the file containing events")
         <*> strOption (short 'h' <> long "host" <> value "localhost" <> help "Bind socket to this host. [default: localhost]")
         <*> option auto (short 'p' <> long "port" <> metavar "PORT" <> value 8081 <> help "Bind socket to this port.  [default: 8081]")
 
@@ -116,11 +119,11 @@ handleMessage f conn nc msChan msg = do
         writeChan msChan (nc, msg')
 
 serve :: Options -> IO ()
-serve (Options f h p) = do
+serve (Options storePath listHost listenPort) = do
     st <- newMVar 0
     chan <- newChan
-    putStrLn $ "Modelyz Store, serving from localhost:" ++ show p ++ "/"
-    WS.runServerWithOptions WS.defaultServerOptions{WS.serverHost = h, WS.serverPort = p} (wsApp f chan st)
+    putStrLn $ "Modelyz Store, serving from localhost:" ++ show listenPort ++ "/"
+    WS.runServerWithOptions WS.defaultServerOptions{WS.serverHost = listHost, WS.serverPort = listenPort} (wsApp storePath chan st)
 
 main :: IO ()
 main =
