@@ -1,26 +1,26 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import Control.Concurrent (
-  Chan,
-  MVar,
-  dupChan,
-  forkIO,
-  newChan,
-  newMVar,
-  putMVar,
-  readChan,
-  takeMVar,
-  writeChan,
- )
+import Control.Concurrent
+  ( Chan,
+    MVar,
+    dupChan,
+    forkIO,
+    newChan,
+    newMVar,
+    putMVar,
+    readChan,
+    takeMVar,
+    writeChan,
+  )
 import Control.Monad (forever, unless, when)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.List ()
 import Data.List qualified as List
-import Data.Map qualified as Map (Map)
+-- import Data.Map qualified as Map (Map)
 import Data.Text qualified as T
-import Message (Message, appendMessage, getMetaString, getUuids, isProcessed, isType, readMessages, setFlow)
+import Message (Message, appendMessage, isProcessed, isType, readMessages, setFlow)
 import Network.WebSockets qualified as WS
 import Options.Applicative
 
@@ -34,7 +34,7 @@ type Host = String
 type Port = Int
 
 -- TODO
-type Pending = Map.Map Int Message
+-- type Pending = Map.Map Int Message
 
 options :: Parser Options
 options =
@@ -123,16 +123,16 @@ serve (Options storePath listHost listenPort) = do
   st <- newMVar 0
   chan <- newChan
   putStrLn $ "Modelyz Store, serving from localhost:" ++ show listenPort ++ "/"
-  WS.runServerWithOptions WS.defaultServerOptions{WS.serverHost = listHost, WS.serverPort = listenPort} (wsApp storePath chan st)
+  WS.runServerWithOptions WS.defaultServerOptions {WS.serverHost = listHost, WS.serverPort = listenPort} (wsApp storePath chan st)
 
 main :: IO ()
 main =
   serve =<< execParser opts
- where
-  opts =
-    info
-      (options <**> helper)
-      ( fullDesc
-          <> progDesc "The central source of all your events"
-          <> header "Modelyz Store"
-      )
+  where
+    opts =
+      info
+        (options <**> helper)
+        ( fullDesc
+            <> progDesc "The central source of all your events"
+            <> header "Modelyz Store"
+        )
