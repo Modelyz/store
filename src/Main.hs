@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+import Connection (uuids)
 import Control.Concurrent (
     Chan,
     MVar,
@@ -15,13 +16,9 @@ import Control.Concurrent (
 import Control.Monad (forever, unless, when)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
-import Data.Aeson.KeyMap qualified as KeyMap
 import Data.List ()
-import Data.List qualified as List
-
--- import Data.Map qualified as Map (Map)
-import Data.Text qualified as T
-import Message (Message, appendMessage, isProcessed, isType, readMessages, setFlow)
+import Message (Message (..), Payload (InitiatedConnection), appendMessage, getFlow, isType, metadata, payload, readMessages, setFlow, uuid)
+import MessageFlow (MessageFlow (..))
 import Network.WebSockets qualified as WS
 import Options.Applicative
 
@@ -60,7 +57,7 @@ wsApp f chan ncMV pending_conn = do
             fix
                 ( \loop -> do
                     (n, ev) <- readChan mschan
-                    when (n /= nc && not (isType "InitiatedConnection" ev)) $ do
+                    when (n /= nc && not (ev `isType` "InitiatedConnection")) $ do
                         putStrLn $ "\nThread " ++ show nc ++ " got stuff through the chan from connected microservice " ++ show n ++ ": " ++ show ev
                         -- TODO: filter what we send back to other microservices?
                         WS.sendTextData conn $ JSON.encode [ev]
@@ -82,42 +79,38 @@ wsApp f chan ncMV pending_conn = do
                 Nothing -> sequence [putStrLn "\nError decoding incoming message"]
 
 handleMessage :: FilePath -> WS.Connection -> NumClient -> Chan (NumClient, Message) -> Message -> IO ()
-handleMessage f conn nc msChan msg = do
-    -- first store eveything except the connection initiation
-    unless (isType "InitiatedConnection" msg) $ do
-        appendMessage f msg
-        WS.sendTextData conn $ JSON.encode $ KeyMap.singleton "messages" $ List.singleton (setFlow "Sent" msg)
-        putStrLn $ "\nStored this message and broadcast to other microservice threads: " ++ show msg
-        -- send the msgs to other connected clients
-        writeChan msChan (nc, msg)
-        unless (isType "AddedIdentifier" msg || isProcessed msg) $ do
-            -- Set all messages as processed, except those for Ident or are already processed
-            let msg' = setFlow "Sent" msg
-            appendMessage f msg'
+handleMessage msgPath conn nc msChan msg = do
+    case payload msg of
+        InitiatedConnection connection -> do
+            let alluuids = uuids connection
+            esevs <- readMessages msgPath
+            let msgs = filter (\e -> uuid (metadata e) `notElem` alluuids) esevs
+            WS.sendTextData conn $ JSON.encode msgs
+            putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messsages to client " ++ show nc
+            -- Send back and store an ACK to let the client know the message has been stored
+            -- Except for events that should be handled by another service
+            let msg' = setFlow Sent msg
+            appendMessage msgPath msg'
             putStrLn $ "\nStored this message: " ++ show msg'
             WS.sendTextData conn $ JSON.encode [msg']
             writeChan msChan (nc, msg')
-    -- if the event is a InitiatedConnection, get the uuid list from it,
-    -- and send back all the missing events (with an added ack)
-    when (isType "InitiatedConnection" msg) $ do
-        let uuids = getUuids msg
-        esevs <- readMessages f
-        let evs =
-                filter
-                    ( \e -> case getMetaString "uuid" e of
-                        Just u -> T.unpack u `notElem` uuids
-                        Nothing -> False
-                    )
-                    esevs
-        WS.sendTextData conn $ JSON.encode evs
-        putStrLn $ "\nSent all missing " ++ show (length evs) ++ " messsages to client " ++ show nc
-        -- Send back and store an ACK to let the client know the message has been stored
-        -- Except for events that should be handled by another service
-        let msg' = setFlow "Sent" msg
-        appendMessage f msg'
-        putStrLn $ "\nStored this message: " ++ show msg'
-        WS.sendTextData conn $ JSON.encode [msg']
-        writeChan msChan (nc, msg')
+        _ -> do
+            -- first store eveything except the connection initiation
+            appendMessage msgPath msg
+            WS.sendTextData conn $ JSON.encode $ setFlow Sent msg
+            putStrLn $ "\nStored this message and broadcast to other microservice threads: " ++ show msg
+            -- send the msgs to other connected clients
+            writeChan msChan (nc, msg)
+            unless (msg `isType` "InitiatedConnection" || getFlow msg == Processed) $ do
+                -- Set all messages as processed, except those for Ident or are already processed
+                let msg' = setFlow Sent msg
+                appendMessage msgPath msg'
+                putStrLn $ "\nStored this message: " ++ show msg'
+                WS.sendTextData conn $ JSON.encode [msg']
+                writeChan msChan (nc, msg')
+
+-- if the event is a InitiatedConnection, get the uuid list from it,
+-- and send back all the missing events (with an added ack)
 
 serve :: Options -> IO ()
 serve (Options storePath listHost listenPort) = do
