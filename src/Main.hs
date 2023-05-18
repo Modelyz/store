@@ -70,13 +70,13 @@ wsApp f chan ncMV pending_conn = do
             putStrLn $ "\nWaiting for new messages from microservice " ++ show nc
             messages <- WS.receiveDataMessage conn
             putStrLn $ "\nReceived stuff through websocket from microservice " ++ show nc ++ ". Handling it : " ++ show messages
-            case JSON.decode
+            case JSON.eitherDecode
                 ( case messages of
                     WS.Text bs _ -> WS.fromLazyByteString bs
                     WS.Binary bs -> WS.fromLazyByteString bs
                 ) of
-                Just evs -> mapM (handleMessage f conn nc mschan) evs
-                Nothing -> sequence [putStrLn "\nError decoding incoming message"]
+                Right evs -> handleMessage f conn nc mschan evs
+                Left err -> putStrLn $ "\nError decoding incoming message: " ++ err
 
 handleMessage :: FilePath -> WS.Connection -> NumClient -> Chan (NumClient, Message) -> Message -> IO ()
 handleMessage msgPath conn nc msChan msg = do
@@ -85,14 +85,14 @@ handleMessage msgPath conn nc msChan msg = do
             let alluuids = uuids connection
             esevs <- readMessages msgPath
             let msgs = filter (\e -> uuid (metadata e) `notElem` alluuids) esevs
-            WS.sendTextData conn $ JSON.encode msgs
+            mapM_ (WS.sendTextData conn . JSON.encode) msgs
             putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messsages to client " ++ show nc
             -- Send back and store an ACK to let the client know the message has been stored
             -- Except for events that should be handled by another service
             let msg' = setFlow Sent msg
             appendMessage msgPath msg'
             putStrLn $ "\nStored this message: " ++ show msg'
-            WS.sendTextData conn $ JSON.encode [msg']
+            WS.sendTextData conn $ JSON.encode msg'
             writeChan msChan (nc, msg')
         _ -> do
             -- first store eveything except the connection initiation
@@ -106,7 +106,7 @@ handleMessage msgPath conn nc msChan msg = do
                 let msg' = setFlow Sent msg
                 appendMessage msgPath msg'
                 putStrLn $ "\nStored this message: " ++ show msg'
-                WS.sendTextData conn $ JSON.encode [msg']
+                WS.sendTextData conn $ JSON.encode msg'
                 writeChan msChan (nc, msg')
 
 -- if the event is a InitiatedConnection, get the uuid list from it,
