@@ -97,17 +97,18 @@ handleMessage msgPath conn nc msChan msg = do
         _ -> do
             -- first store eveything except the connection initiation
             appendMessage msgPath msg
-            WS.sendTextData conn $ JSON.encode $ setFlow Sent msg
+            when (getFlow msg == Requested) $ do
+                WS.sendTextData conn $ JSON.encode $ setFlow Sent msg
             putStrLn $ "\nStored this message and broadcast to other microservice threads: " ++ show msg
             -- send the msgs to other connected clients
             writeChan msChan (nc, msg)
             unless (msg `isType` "InitiatedConnection" || getFlow msg == Processed) $ do
                 -- Set all messages as processed, except those for Ident or are already processed
-                let msg' = setFlow Sent msg
-                appendMessage msgPath msg'
-                putStrLn $ "\nStored this message: " ++ show msg'
-                WS.sendTextData conn $ JSON.encode msg'
-                writeChan msChan (nc, msg')
+                let processedMsg = setFlow Processed msg
+                appendMessage msgPath processedMsg
+                putStrLn $ "\nStored this message: " ++ show processedMsg
+                WS.sendTextData conn $ JSON.encode processedMsg
+                writeChan msChan (nc, processedMsg)
 
 -- if the event is a InitiatedConnection, get the uuid list from it,
 -- and send back all the missing events (with an added ack)
