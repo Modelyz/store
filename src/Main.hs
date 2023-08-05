@@ -87,24 +87,24 @@ handleMessage msgPath conn nc msChan msg = do
             let msgs = filter (\e -> uuid (metadata e) `notElem` alluuids) esevs
             mapM_ (WS.sendTextData conn . JSON.encode) msgs
             putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messsages to client " ++ show nc
-            -- Send back and store an ACK to let the client know the message has been stored
-            -- Except for events that should be handled by another service
-            let msg' = setCreator "store" $ setFlow Sent msg
-            appendMessage msgPath msg'
-            putStrLn $ "\nStored this message: " ++ show msg'
-            WS.sendTextData conn $ JSON.encode msg'
-            writeChan msChan (nc, msg')
+        -- Send back and store an ACK to let the client know the message has been stored
+        -- Except for events that should be handled by another service
+        --- let msg' = setCreator "store" $ setFlow Received msg
+        --- appendMessage msgPath msg'
+        --- putStrLn $ "\nStored this message: " ++ show msg'
+        --- WS.sendTextData conn $ JSON.encode msg'
+        --- writeChan msChan (nc, msg')
         _ -> do
             -- first store eveything except the connection initiation
             appendMessage msgPath msg
-            when (getFlow msg == Requested) $ do
-                WS.sendTextData conn $ JSON.encode $ setFlow Sent msg
-            putStrLn $ "\nStored this message and broadcast to other microservice threads: " ++ show msg
+            -- when (getFlow msg == Requested) $ do
+            --    WS.sendTextData conn $ JSON.encode $ setFlow Received msg
+            -- putStrLn $ "\nStored this message and broadcast to other microservice threads: " ++ show msg
             -- send the msgs to other connected clients
             writeChan msChan (nc, msg)
             unless (msg `isType` "InitiatedConnection" || getFlow msg == Processed) $ do
                 -- Set all messages as processed, except those for Ident or are already processed
-                let processedMsg = setFlow Processed msg
+                let processedMsg = setCreator "store" $ setFlow Processed msg
                 appendMessage msgPath processedMsg
                 putStrLn $ "\nStored this message: " ++ show processedMsg
                 WS.sendTextData conn $ JSON.encode processedMsg
