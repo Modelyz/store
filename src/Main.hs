@@ -17,7 +17,7 @@ import Control.Monad (forever, unless, when)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
-import Message (Message (..), Payload (InitiatedConnection), appendMessage, getFlow, isType, metadata, payload, readMessages, setFlow, uuid)
+import Message (Message (..), Payload (InitiatedConnection), appendMessage, getFlow, isType, metadata, payload, readMessages, setCreator, setFlow, uuid)
 import MessageFlow (MessageFlow (..))
 import Network.WebSockets qualified as WS
 import Options.Applicative
@@ -89,7 +89,7 @@ handleMessage msgPath conn nc msChan msg = do
             putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messsages to client " ++ show nc
             -- Send back and store an ACK to let the client know the message has been stored
             -- Except for events that should be handled by another service
-            let msg' = setFlow Sent msg
+            let msg' = setCreator "store" $ setFlow Sent msg
             appendMessage msgPath msg'
             putStrLn $ "\nStored this message: " ++ show msg'
             WS.sendTextData conn $ JSON.encode msg'
