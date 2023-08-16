@@ -17,7 +17,7 @@ import Control.Monad (forever, unless, when)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
-import Message (Message (..), Payload (InitiatedConnection), appendMessage, getFlow, isType, metadata, payload, readMessages, setCreator, setFlow, uuid)
+import Message (Message (..), Payload (..), appendMessage, getFlow, isType, metadata, payload, readMessages, setCreator, setFlow, uuid)
 import MessageFlow (MessageFlow (..))
 import Network.WebSockets qualified as WS
 import Options.Applicative
@@ -37,7 +37,7 @@ type Port = Int
 options :: Parser Options
 options =
     Options
-        <$> strOption (short 'f' <> long "file" <> value "data/messagestore.txt" <> help "Filename of the file containing events")
+        <$> strOption (short 'f' <> long "file" <> value "data/messagestore.txt" <> help "Filename of the file containing messages")
         <*> strOption (short 'h' <> long "host" <> value "localhost" <> help "Bind socket to this host. [default: localhost]")
         <*> option auto (short 'p' <> long "port" <> metavar "PORT" <> value 8081 <> help "Bind socket to this port.  [default: 8081]")
 
@@ -60,55 +60,53 @@ wsApp f chan ncMV pending_conn = do
                     when (n /= nc && not (ev `isType` "InitiatedConnection")) $ do
                         putStrLn $ "\nThread " ++ show nc ++ " got stuff through the chan from connected microservice " ++ show n ++ ": " ++ show ev
                         -- TODO: filter what we send back to other microservices?
-                        WS.sendTextData conn $ JSON.encode [ev]
+                        WS.sendTextData conn $ JSON.encode ev
                         putStrLn $ "\nSent to client " ++ show nc ++ " through WS: " ++ show ev
                     loop
                 )
-    -- handle messages coming through websocket from the currently connected microservice
+    -- handle message coming through websocket from the currently connected microservice
     WS.withPingThread conn 30 (return ()) $
         forever $ do
-            putStrLn $ "\nWaiting for new messages from microservice " ++ show nc
-            messages <- WS.receiveDataMessage conn
-            putStrLn $ "\nReceived stuff through websocket from microservice " ++ show nc ++ ". Handling it : " ++ show messages
+            putStrLn $ "\nWaiting for new message from microservice " ++ show nc
+            msg <- WS.receiveDataMessage conn
+            putStrLn $ "\nReceived stuff through websocket from microservice " ++ show nc ++ ". Handling it : " ++ show msg
             case JSON.eitherDecode
-                ( case messages of
+                ( case msg of
                     WS.Text bs _ -> WS.fromLazyByteString bs
                     WS.Binary bs -> WS.fromLazyByteString bs
                 ) of
-                Right evs -> handleMessage f conn nc mschan evs
+                Right ev -> routeMessage f conn nc mschan ev
                 Left err -> putStrLn $ "\nError decoding incoming message: " ++ err
 
-handleMessage :: FilePath -> WS.Connection -> NumClient -> Chan (NumClient, Message) -> Message -> IO ()
-handleMessage msgPath conn nc msChan msg = do
+routeMessage :: FilePath -> WS.Connection -> NumClient -> Chan (NumClient, Message) -> Message -> IO ()
+routeMessage msgPath conn nc msChan msg = do
+    case payload msg of
+        InitiatedConnection _ -> putStrLn "not storing an InitiatedConnection msg"
+        _ -> do
+            appendMessage msgPath msg
+            putStrLn $ "\nStored this message: " ++ show msg
     case payload msg of
         InitiatedConnection connection -> do
             let alluuids = uuids connection
             esevs <- readMessages msgPath
             let msgs = filter (\e -> uuid (metadata e) `notElem` alluuids) esevs
             mapM_ (WS.sendTextData conn . JSON.encode) msgs
-            putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messsages to client " ++ show nc
-        -- Send back and store an ACK to let the client know the message has been stored
-        -- Except for events that should be handled by another service
-        --- let msg' = setCreator "store" $ setFlow Received msg
-        --- appendMessage msgPath msg'
-        --- putStrLn $ "\nStored this message: " ++ show msg'
-        --- WS.sendTextData conn $ JSON.encode msg'
-        --- writeChan msChan (nc, msg')
-        _ -> do
-            -- first store eveything except the connection initiation
-            appendMessage msgPath msg
-            -- when (getFlow msg == Requested) $ do
-            --    WS.sendTextData conn $ JSON.encode $ setFlow Received msg
-            -- putStrLn $ "\nStored this message and broadcast to other microservice threads: " ++ show msg
-            -- send the msgs to other connected clients
-            writeChan msChan (nc, msg)
-            unless (msg `isType` "InitiatedConnection" || getFlow msg == Processed) $ do
-                -- Set all messages as processed, except those for Ident or are already processed
-                let processedMsg = setCreator "store" $ setFlow Processed msg
-                appendMessage msgPath processedMsg
-                putStrLn $ "\nStored this message: " ++ show processedMsg
-                WS.sendTextData conn $ JSON.encode processedMsg
-                writeChan msChan (nc, processedMsg)
+            putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messages to client " ++ show nc
+        AddedIdentifierType _ -> writeChan msChan (nc, msg)
+        RemovedIdentifierType _ -> writeChan msChan (nc, msg)
+        ChangedIdentifierType _ _ -> writeChan msChan (nc, msg)
+        AddedIdentifier _ -> writeChan msChan (nc, msg)
+        _ -> processMessage msgPath conn nc msChan msg
+
+processMessage :: FilePath -> WS.Connection -> NumClient -> Chan (NumClient, Message) -> Message -> IO ()
+processMessage msgPath conn nc msChan msg = do
+    unless (getFlow msg == Processed) $ do
+        -- Set all messages as processed, except those for Ident or are already processed
+        let processedMsg = setCreator "store" $ setFlow Processed msg
+        appendMessage msgPath processedMsg
+        putStrLn $ "\nStored this message: " ++ show processedMsg
+        WS.sendTextData conn $ JSON.encode processedMsg
+        writeChan msChan (nc, processedMsg)
 
 -- if the event is a InitiatedConnection, get the uuid list from it,
 -- and send back all the missing events (with an added ack)
