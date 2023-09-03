@@ -19,7 +19,7 @@ import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
 import Data.Set as Set (Set, delete, empty, insert)
-import Data.Text qualified as Text (unpack)
+import Data.Text qualified as T (unpack)
 import Data.UUID (UUID)
 import Message (Message (..), Metadata (..), Payload (..), appendMessage, getFlow, metadata, payload, readMessages, uuid)
 import MessageFlow (MessageFlow (..))
@@ -59,11 +59,12 @@ options =
 routeMessage :: FilePath -> WS.Connection -> Client -> Message -> IO ()
 routeMessage msgPath conn client msg = do
     -- route message incoming into store and send to the expected ms
+    -- client is the currently connected ms
     case payload msg of
         InitiatedConnection connection -> do
-            let alluuids = Connection.uuids connection
+            let remoteUuids = Connection.uuids connection
             esevs <- readMessages msgPath
-            let msgs = filter (\e -> uuid (metadata e) `notElem` alluuids) esevs
+            let msgs = filter (\e -> uuid (metadata e) `notElem` remoteUuids) esevs
             mapM_ (WS.sendTextData conn . JSON.encode) msgs
             putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messages to " ++ client
         -- send to ident :
@@ -85,7 +86,7 @@ routeMessage msgPath conn client msg = do
                 putStrLn $ "\nSent to " ++ client ++ " through WS: " ++ show msg
         -- send to studio :
         _ -> do
-            Monad.when (client /= "ident" && getFlow msg == Processed && from (metadata msg) == "ident") $ do
+            Monad.when (client == "studio" && getFlow msg == Processed && from (metadata msg) == "ident") $ do
                 WS.sendTextData conn $ JSON.encode msg
                 putStrLn $ "\nSent to " ++ client ++ " through WS: " ++ show msg
 
@@ -125,15 +126,16 @@ serverApp msgPath chan stateMV pending_conn = do
                     case payload msg of
                         InitiatedConnection _ -> do
                             -- get the name of the connected client
-                            let from = Text.unpack $ Message.from $ metadata msg
+                            let from = T.unpack $ Message.from $ metadata msg
                             _ <- takeMVar clientMV
                             putMVar clientMV from
                             putStrLn $ "Connected client: " ++ from
-                        _ -> appendMessage msgPath msg
-                    state <- takeMVar stateMV
-                    putMVar stateMV $! update state msg
-                    writeChan msChan msg
-                    putStrLn $ "Writing to the chan: " ++ show msg
+                        _ -> do
+                            appendMessage msgPath msg
+                            state <- takeMVar stateMV
+                            putMVar stateMV $! update state msg
+                            writeChan msChan msg
+                            putStrLn $ "Writing to the chan: " ++ show msg
                 Left err -> putStrLn $ "\nError decoding incoming message: " ++ err
 
 update :: State -> Message -> State
