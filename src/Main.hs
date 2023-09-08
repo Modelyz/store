@@ -19,17 +19,16 @@ import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
 import Data.Set as Set (Set, delete, empty, insert)
-import Data.Text qualified as T (unpack)
-import Data.UUID (UUID)
-import Message (Message (..), Metadata (..), Payload (..), appendMessage, getFlow, metadata, payload, readMessages, uuid)
+import Message (Message (..), Payload (..), appendMessage, getFlow, metadata, payload, readMessages)
 import MessageFlow (MessageFlow (..))
+import Metadata (Metadata, Origin (..), flow, from)
 import Network.WebSockets qualified as WS
 import Options.Applicative
 
 -- port, file
 data Options = Options FilePath Host Port
 
-type Client = String
+type Client = Origin
 
 type Host = String
 
@@ -37,7 +36,7 @@ type Port = Int
 
 data State = State
     { pending :: Set Message
-    , uuids :: Set UUID
+    , uuids :: Set Metadata
     }
     deriving (Show)
 
@@ -56,43 +55,35 @@ options =
         <*> strOption (short 'h' <> long "host" <> value "localhost" <> help "Bind socket to this host. [default: localhost]")
         <*> option auto (short 'p' <> long "port" <> metavar "PORT" <> value 8081 <> help "Bind socket to this port.  [default: 8081]")
 
-routeMessage :: FilePath -> WS.Connection -> Client -> Message -> IO ()
-routeMessage msgPath conn client msg = do
+routeMessage :: WS.Connection -> Client -> Message -> IO ()
+routeMessage conn client msg = do
     -- route message incoming into store and send to the expected ms
     -- client is the currently connected ms
-    case payload msg of
-        InitiatedConnection connection -> do
-            let remoteUuids = Connection.uuids connection
-            esevs <- readMessages msgPath
-            let msgs = filter (\e -> uuid (metadata e) `notElem` remoteUuids) esevs
-            mapM_ (WS.sendTextData conn . JSON.encode) msgs
-            putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messages to " ++ client
-        -- send to ident :
-        AddedIdentifierType _ -> do
-            Monad.when (client == "ident" && getFlow msg == Requested && from (metadata msg) == "front") $ do
+    Monad.when (client == Ident && getFlow msg == Requested && from (metadata msg) == Front) $ do
+        case payload msg of
+            InitiatedConnection _ -> return ()
+            -- send to ident :
+            AddedIdentifierType _ -> do
                 WS.sendTextData conn $ JSON.encode msg
-                putStrLn $ "\nSent to " ++ client ++ " through WS: " ++ show msg
-        RemovedIdentifierType _ -> do
-            Monad.when (client == "ident" && getFlow msg == Requested && from (metadata msg) == "front") $ do
+                putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+            RemovedIdentifierType _ -> do
                 WS.sendTextData conn $ JSON.encode msg
-                putStrLn $ "\nSent to " ++ client ++ " through WS: " ++ show msg
-        ChangedIdentifierType _ _ -> do
-            Monad.when (client == "ident" && getFlow msg == Requested && from (metadata msg) == "front") $ do
+                putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+            ChangedIdentifierType _ _ -> do
                 WS.sendTextData conn $ JSON.encode msg
-                putStrLn $ "\nSent to " ++ client ++ " through WS: " ++ show msg
-        AddedIdentifier _ -> do
-            Monad.when (client == "ident" && getFlow msg == Requested && from (metadata msg) == "front") $ do
+                putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+            AddedIdentifier _ -> do
                 WS.sendTextData conn $ JSON.encode msg
-                putStrLn $ "\nSent to " ++ client ++ " through WS: " ++ show msg
-        -- send to studio :
-        _ -> do
-            Monad.when (client == "studio" && getFlow msg == Processed && from (metadata msg) == "ident") $ do
-                WS.sendTextData conn $ JSON.encode msg
-                putStrLn $ "\nSent to " ++ client ++ " through WS: " ++ show msg
+                putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+            _ -> return ()
+    -- send to studio :
+    Monad.when (client == Studio && getFlow msg == Processed && from (metadata msg) == Ident) $ do
+        WS.sendTextData conn $ JSON.encode msg
+        putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
 
 serverApp :: FilePath -> Chan Message -> StateMV -> WS.ServerApp
 serverApp msgPath chan stateMV pending_conn = do
-    clientMV <- newMVar ""
+    clientMV <- newMVar None
     msChan <- dupChan chan
     -- accept a new connexion
     conn <- WS.acceptRequest pending_conn
@@ -103,12 +94,12 @@ serverApp msgPath chan stateMV pending_conn = do
         forkIO $
             fix
                 ( \loop -> do
-                    putStrLn "Waiting for msg from the chan"
+                    putStrLn "\nWaiting for msg from the chan"
                     msg <- readChan msChan
                     -- store the name of the client in a thread-local MVar
                     client <- readMVar clientMV
-                    putStrLn $ "\nGot msg through the chan from " ++ client ++ ": " ++ show msg
-                    routeMessage msgPath conn client msg
+                    putStrLn $ "\n" ++ show client ++ " server thread received msg through the chan: " ++ show msg
+                    routeMessage conn client msg
                     loop
                 )
     -- SERVER MAIN THREAD
@@ -116,7 +107,7 @@ serverApp msgPath chan stateMV pending_conn = do
     WS.withPingThread conn 30 (return ()) $
         Monad.forever $ do
             message <- WS.receiveDataMessage conn
-            putStrLn $ "\nReceived stuff through websocket: " ++ show message
+            putStrLn $ "\nReceived msg through websocket: " ++ show message
             case JSON.eitherDecode
                 ( case message of
                     WS.Text bs _ -> WS.fromLazyByteString bs
@@ -124,12 +115,17 @@ serverApp msgPath chan stateMV pending_conn = do
                 ) of
                 Right msg -> do
                     case payload msg of
-                        InitiatedConnection _ -> do
+                        InitiatedConnection connection -> do
                             -- get the name of the connected client
-                            let from = T.unpack $ Message.from $ metadata msg
+                            let from = Metadata.from $ metadata msg
                             _ <- takeMVar clientMV
                             putMVar clientMV from
-                            putStrLn $ "Connected client: " ++ from
+                            putStrLn $ "Connected client: " ++ show from
+                            let remoteUuids = Connection.uuids connection
+                            messages <- readMessages msgPath
+                            let msgs = filter (\e -> metadata e `notElem` remoteUuids) messages
+                            mapM_ (WS.sendTextData conn . JSON.encode) msgs
+                            putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messages to " ++ show from
                         _ -> do
                             appendMessage msgPath msg
                             state <- takeMVar stateMV
@@ -146,7 +142,7 @@ update state msg =
             _ ->
                 state
                     { pending = Set.insert msg $ pending state
-                    , Main.uuids = Set.insert (uuid (metadata msg)) (Main.uuids state)
+                    , Main.uuids = Set.insert (metadata msg) (Main.uuids state)
                     }
         Processed -> state{pending = Set.delete msg $ pending state}
         Error _ -> state
