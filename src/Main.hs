@@ -76,9 +76,38 @@ routeMessage conn client msg = do
                 putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
             _ -> return ()
     -- send to studio :
-    Monad.when (client == Studio && getFlow msg == Processed && from (metadata msg) == Ident) $ do
-        WS.sendTextData conn $ JSON.encode msg
-        putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+    Monad.when (client == Studio && from (metadata msg) == Ident) $ do
+        case getFlow msg of
+            Processed -> do
+                WS.sendTextData conn $ JSON.encode msg
+                putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+            _ -> return ()
+    Monad.when (client == Studio && from (metadata msg) == Front) $ do
+        case getFlow msg of
+            Requested -> do
+                case payload msg of
+                    InitiatedConnection _ -> return ()
+                    AddedIdentifierType _ -> return ()
+                    RemovedIdentifierType _ -> return ()
+                    ChangedIdentifierType _ _ -> return ()
+                    AddedIdentifier _ -> return ()
+                    _ -> do
+                        WS.sendTextData conn $ JSON.encode msg
+                        putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+            _ -> return ()
+    Monad.when (client == Studio && from (metadata msg) == Studio) $ do
+        case getFlow msg of
+            Processed -> do
+                case payload msg of
+                    InitiatedConnection _ -> return ()
+                    AddedIdentifierType _ -> return ()
+                    RemovedIdentifierType _ -> return ()
+                    ChangedIdentifierType _ _ -> return ()
+                    AddedIdentifier _ -> return ()
+                    _ -> do
+                        WS.sendTextData conn $ JSON.encode msg
+                        putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+            _ -> return ()
 
 serverApp :: FilePath -> Chan Message -> StateMV -> WS.ServerApp
 serverApp msgPath chan stateMV pending_conn = do
