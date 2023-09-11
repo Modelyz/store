@@ -125,6 +125,11 @@ serverApp msgPath chan stateMV pending_conn = do
                             let msgs = filter (\e -> metadata e `notElem` remoteUuids) messages
                             mapM_ (WS.sendTextData conn . JSON.encode) msgs
                             putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messages to " ++ show from
+                            -- send the InitiatedConnection terminaison to signal the sync is over
+                            (WS.sendTextData conn . JSON.encode) $
+                                Message
+                                    (Metadata{uuid = uuid $ metadata msg, Metadata.when = when $ metadata msg, Metadata.from = Ident, Metadata.flow = Processed})
+                                    (InitiatedConnection (Connection{lastMessageTime = 0, Connection.uuids = Set.empty}))
                         _ -> do
                             appendMessage msgPath msg
                             state <- takeMVar stateMV
