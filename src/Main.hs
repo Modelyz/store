@@ -18,10 +18,12 @@ import Control.Monad qualified as Monad (forever, when)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
-import Data.Set as Set (Set, delete, empty, insert)
+import Data.Map.Strict as Map (Map, delete, empty, insert)
+import Data.Set as Set (Set, empty, insert)
+import Data.UUID (UUID)
 import Message (Message (..), Payload (..), appendMessage, getFlow, metadata, payload, readMessages)
 import MessageFlow (MessageFlow (..))
-import Metadata (Metadata, Origin (..), flow, from)
+import Metadata (Metadata (Metadata), Origin (..), flow, from, uuid, when)
 import Network.WebSockets qualified as WS
 import Options.Applicative
 
@@ -35,7 +37,7 @@ type Host = String
 type Port = Int
 
 data State = State
-    { pending :: Set Message
+    { pending :: Map UUID Message
     , uuids :: Set Metadata
     }
     deriving (Show)
@@ -43,10 +45,7 @@ data State = State
 type StateMV = MVar State
 
 emptyState :: State
-emptyState = State{pending = Set.empty, Main.uuids = Set.empty}
-
--- TODO
--- type Pending = Map.Map Int Message
+emptyState = State{pending = Map.empty, Main.uuids = Set.empty}
 
 options :: Parser Options
 options =
@@ -141,10 +140,14 @@ update state msg =
             InitiatedConnection _ -> state
             _ ->
                 state
-                    { pending = Set.insert msg $ pending state
+                    { pending = Map.insert (Metadata.uuid (metadata msg)) msg $ pending state
                     , Main.uuids = Set.insert (metadata msg) (Main.uuids state)
                     }
-        Processed -> state{pending = Set.delete msg $ pending state}
+        Processed ->
+            state
+                { pending = Map.delete (Metadata.uuid (metadata msg)) $ pending state
+                , Main.uuids = Set.insert (metadata msg) (Main.uuids state)
+                }
         Error _ -> state
 
 serve :: Options -> IO ()
@@ -157,9 +160,7 @@ serve (Options storePath listHost listenPort) = do
     state <- takeMVar stateMV
     let newState = foldl update state msgs -- TODO foldr or strict foldl ?
     putMVar stateMV newState
-    putStrLn "Old state:"
-    print state
-    putStrLn "New State:"
+    putStrLn "State:"
     print newState
     -- listen for clients
     putStrLn $ "Modelyz Store, serving from localhost:" ++ show listenPort ++ "/"
