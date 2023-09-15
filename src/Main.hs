@@ -18,10 +18,11 @@ import Control.Monad qualified as Monad (forever)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict as Map (Map, delete, empty, insert)
 import Data.Set as Set (Set, empty, insert)
 import Data.UUID (UUID)
-import Message (Message (..), Payload (..), appendMessage, getFlow, metadata, payload, readMessages)
+import Message (Message (..), Payload (..), appendMessage, creator, getFlow, metadata, payload, readMessages, setVisited)
 import MessageFlow (MessageFlow (..))
 import Metadata (Metadata (Metadata), Origin (..), flow, from, uuid, when)
 import Network.WebSockets qualified as WS
@@ -60,7 +61,7 @@ routeMessage conn client msg = do
     -- client is the currently connected ms
     case client of
         Ident -> case getFlow msg of
-            Requested -> case from (metadata msg) of
+            Requested -> case creator msg of
                 Front ->
                     case payload msg of
                         InitiatedConnection _ -> return ()
@@ -81,7 +82,7 @@ routeMessage conn client msg = do
                 _ -> return ()
             _ -> return ()
         Studio -> case getFlow msg of
-            Requested -> case from (metadata msg) of
+            Requested -> case creator msg of
                 Front -> case payload msg of
                     InitiatedConnection _ -> return ()
                     AddedIdentifierType _ -> return ()
@@ -92,7 +93,7 @@ routeMessage conn client msg = do
                         WS.sendTextData conn $ JSON.encode msg
                         putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
                 _ -> return ()
-            Processed -> case from (metadata msg) of
+            Processed -> case creator msg of
                 Studio -> do
                     WS.sendTextData conn $ JSON.encode msg
                     putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
@@ -139,7 +140,7 @@ serverApp msgPath chan stateMV pending_conn = do
                     case payload msg of
                         InitiatedConnection connection -> do
                             -- get the name of the connected client
-                            let from = Metadata.from $ metadata msg
+                            let from = creator msg
                             _ <- takeMVar clientMV
                             putMVar clientMV from
                             putStrLn $ "Connected client: " ++ show from
@@ -151,14 +152,15 @@ serverApp msgPath chan stateMV pending_conn = do
                             -- send the InitiatedConnection terminaison to signal the sync is over
                             (WS.sendTextData conn . JSON.encode) $
                                 Message
-                                    (Metadata{uuid = uuid $ metadata msg, Metadata.when = when $ metadata msg, Metadata.from = Ident, Metadata.flow = Processed})
+                                    (Metadata{uuid = uuid $ metadata msg, Metadata.when = when $ metadata msg, Metadata.from = NonEmpty.singleton Ident, Metadata.flow = Processed})
                                     (InitiatedConnection (Connection{lastMessageTime = 0, Connection.uuids = Set.empty}))
                         _ -> do
-                            appendMessage msgPath msg
+                            let msg' = setVisited Store msg
+                            appendMessage msgPath msg'
                             state <- takeMVar stateMV
-                            putMVar stateMV $! update state msg
-                            writeChan msChan msg
-                            putStrLn $ "Writing to the chan: " ++ show msg
+                            putMVar stateMV $! update state msg'
+                            writeChan msChan msg'
+                            putStrLn $ "Writing to the chan: " ++ show msg'
                 Left err -> putStrLn $ "\nError decoding incoming message: " ++ err
 
 update :: State -> Message -> State
