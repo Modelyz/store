@@ -14,7 +14,7 @@ import Control.Concurrent (
     takeMVar,
     writeChan,
  )
-import Control.Monad qualified as Monad (forever, when)
+import Control.Monad qualified as Monad (forever)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
@@ -58,34 +58,31 @@ routeMessage :: WS.Connection -> Client -> Message -> IO ()
 routeMessage conn client msg = do
     -- route message incoming into store and send to the expected ms
     -- client is the currently connected ms
-    Monad.when (client == Ident && getFlow msg == Requested && from (metadata msg) == Front) $ do
-        case payload msg of
-            InitiatedConnection _ -> return ()
-            -- send to ident :
-            AddedIdentifierType _ -> do
-                WS.sendTextData conn $ JSON.encode msg
-                putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
-            RemovedIdentifierType _ -> do
-                WS.sendTextData conn $ JSON.encode msg
-                putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
-            ChangedIdentifierType _ _ -> do
-                WS.sendTextData conn $ JSON.encode msg
-                putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
-            AddedIdentifier _ -> do
-                WS.sendTextData conn $ JSON.encode msg
-                putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+    case client of
+        Ident -> case getFlow msg of
+            Requested -> case from (metadata msg) of
+                Front ->
+                    case payload msg of
+                        InitiatedConnection _ -> return ()
+                        -- send to ident :
+                        AddedIdentifierType _ -> do
+                            WS.sendTextData conn $ JSON.encode msg
+                            putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                        RemovedIdentifierType _ -> do
+                            WS.sendTextData conn $ JSON.encode msg
+                            putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                        ChangedIdentifierType _ _ -> do
+                            WS.sendTextData conn $ JSON.encode msg
+                            putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                        AddedIdentifier _ -> do
+                            WS.sendTextData conn $ JSON.encode msg
+                            putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                        _ -> return ()
+                _ -> return ()
             _ -> return ()
-    -- send to studio :
-    Monad.when (client == Studio && from (metadata msg) == Ident) $ do
-        case getFlow msg of
-            Processed -> do
-                WS.sendTextData conn $ JSON.encode msg
-                putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
-            _ -> return ()
-    Monad.when (client == Studio && from (metadata msg) == Front) $ do
-        case getFlow msg of
-            Requested -> do
-                case payload msg of
+        Studio -> case getFlow msg of
+            Requested -> case from (metadata msg) of
+                Front -> case payload msg of
                     InitiatedConnection _ -> return ()
                     AddedIdentifierType _ -> return ()
                     RemovedIdentifierType _ -> return ()
@@ -94,20 +91,17 @@ routeMessage conn client msg = do
                     _ -> do
                         WS.sendTextData conn $ JSON.encode msg
                         putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                _ -> return ()
+            Processed -> case from (metadata msg) of
+                Studio -> do
+                    WS.sendTextData conn $ JSON.encode msg
+                    putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                Ident -> do
+                    WS.sendTextData conn $ JSON.encode msg
+                    putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                _ -> return ()
             _ -> return ()
-    Monad.when (client == Studio && from (metadata msg) == Studio) $ do
-        case getFlow msg of
-            Processed -> do
-                case payload msg of
-                    InitiatedConnection _ -> return ()
-                    AddedIdentifierType _ -> return ()
-                    RemovedIdentifierType _ -> return ()
-                    ChangedIdentifierType _ _ -> return ()
-                    AddedIdentifier _ -> return ()
-                    _ -> do
-                        WS.sendTextData conn $ JSON.encode msg
-                        putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
-            _ -> return ()
+        _ -> return ()
 
 serverApp :: FilePath -> Chan Message -> StateMV -> WS.ServerApp
 serverApp msgPath chan stateMV pending_conn = do
