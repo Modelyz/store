@@ -80,6 +80,14 @@ routeMessage conn client msg = do
                             putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
                         _ -> return ()
                 _ -> return ()
+            Processed -> case creator msg of
+                Studio -> do
+                    WS.sendTextData conn $ JSON.encode msg
+                    putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                Ident -> do
+                    WS.sendTextData conn $ JSON.encode msg
+                    putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                _ -> return ()
             _ -> return ()
         Studio -> case getFlow msg of
             Requested -> case creator msg of
