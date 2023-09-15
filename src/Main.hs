@@ -18,11 +18,11 @@ import Control.Monad qualified as Monad (forever)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
-import Data.List.NonEmpty qualified as NonEmpty
+import Data.List qualified as List
 import Data.Map.Strict as Map (Map, delete, empty, insert)
 import Data.Set as Set (Set, empty, insert)
 import Data.UUID (UUID)
-import Message (Message (..), Payload (..), appendMessage, creator, getFlow, metadata, payload, readMessages, setVisited)
+import Message (Message (..), MessageId, Payload (..), appendMessage, creator, getFlow, messageId, metadata, payload, readMessages, setVisited)
 import MessageFlow (MessageFlow (..))
 import Metadata (Metadata (Metadata), Origin (..), flow, from, uuid, when)
 import Network.WebSockets qualified as WS
@@ -39,7 +39,7 @@ type Port = Int
 
 data State = State
     { pending :: Map UUID Message
-    , uuids :: Set Metadata
+    , uuids :: Set MessageId
     }
     deriving (Show)
 
@@ -154,13 +154,13 @@ serverApp msgPath chan stateMV pending_conn = do
                             putStrLn $ "Connected client: " ++ show from
                             let remoteUuids = Connection.uuids connection
                             messages <- readMessages msgPath
-                            let msgs = filter (\e -> metadata e `notElem` remoteUuids) messages
+                            let msgs = filter (\e -> (messageId . metadata) e `notElem` remoteUuids) messages
                             mapM_ (WS.sendTextData conn . JSON.encode) msgs
                             putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messages to " ++ show from
                             -- send the InitiatedConnection terminaison to signal the sync is over
                             (WS.sendTextData conn . JSON.encode) $
                                 Message
-                                    (Metadata{uuid = uuid $ metadata msg, Metadata.when = when $ metadata msg, Metadata.from = NonEmpty.singleton Ident, Metadata.flow = Processed})
+                                    (Metadata{uuid = uuid $ metadata msg, Metadata.when = when $ metadata msg, Metadata.from = List.singleton Ident, Metadata.flow = Processed})
                                     (InitiatedConnection (Connection{lastMessageTime = 0, Connection.uuids = Set.empty}))
                         _ -> do
                             let msg' = setVisited Store msg
@@ -179,12 +179,12 @@ update state msg =
             _ ->
                 state
                     { pending = Map.insert (Metadata.uuid (metadata msg)) msg $ pending state
-                    , Main.uuids = Set.insert (metadata msg) (Main.uuids state)
+                    , Main.uuids = Set.insert (messageId $ metadata msg) (Main.uuids state)
                     }
         Processed ->
             state
                 { pending = Map.delete (Metadata.uuid (metadata msg)) $ pending state
-                , Main.uuids = Set.insert (metadata msg) (Main.uuids state)
+                , Main.uuids = Set.insert (messageId $ metadata msg) (Main.uuids state)
                 }
         Error _ -> state
 
