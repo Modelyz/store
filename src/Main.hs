@@ -21,9 +21,9 @@ import Data.List ()
 import Data.List qualified as List
 import Data.Map.Strict as Map (Map, delete, empty, insert)
 import Data.Set as Set (Set, empty, insert)
-import Data.UUID (UUID)
-import Message (Message (..), MessageId, Payload (..), appendMessage, creator, getFlow, messageId, metadata, payload, readMessages, setVisited)
+import Message (Message (..), Payload (..), appendMessage, creator, getFlow, metadata, payload, readMessages, setVisited)
 import MessageFlow (MessageFlow (..))
+import MessageId (MessageId, messageId)
 import Metadata (Metadata (Metadata), Origin (..), flow, from, uuid, when)
 import Network.WebSockets qualified as WS
 import Options.Applicative
@@ -38,7 +38,7 @@ type Host = String
 type Port = Int
 
 data State = State
-    { pending :: Map UUID Message
+    { pending :: Map MessageId Message
     , uuids :: Set MessageId
     }
     deriving (Show)
@@ -176,12 +176,12 @@ update state msg =
             InitiatedConnection _ -> state
             _ ->
                 state
-                    { pending = Map.insert (Metadata.uuid (metadata msg)) msg $ pending state
+                    { pending = Map.insert (messageId (metadata msg)) msg $ pending state
                     , Main.uuids = Set.insert (messageId $ metadata msg) (Main.uuids state)
                     }
         Processed ->
             state
-                { pending = Map.delete (Metadata.uuid (metadata msg)) $ pending state
+                { pending = Map.delete (messageId (metadata msg)) $ pending state
                 , Main.uuids = Set.insert (messageId $ metadata msg) (Main.uuids state)
                 }
         Error _ -> state
