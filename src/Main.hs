@@ -14,7 +14,7 @@ import Control.Concurrent (
     takeMVar,
     writeChan,
  )
-import Control.Monad qualified as Monad (forever)
+import Control.Monad qualified as Monad (forever, when)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
@@ -84,9 +84,6 @@ routeMessage conn client msg = do
                 Studio -> do
                     WS.sendTextData conn $ JSON.encode msg
                     putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
-                Ident -> do
-                    WS.sendTextData conn $ JSON.encode msg
-                    putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
                 _ -> return ()
             _ -> return ()
         Studio -> case getFlow msg of
@@ -145,6 +142,7 @@ serverApp msgPath chan stateMV pending_conn = do
                     WS.Binary bs -> WS.fromLazyByteString bs
                 ) of
                 Right msg -> do
+                    st' <- readMVar stateMV
                     case payload msg of
                         InitiatedConnection connection -> do
                             -- get the name of the connected client
@@ -162,7 +160,7 @@ serverApp msgPath chan stateMV pending_conn = do
                                 Message
                                     (Metadata{uuid = uuid $ metadata msg, Metadata.when = when $ metadata msg, Metadata.from = List.singleton Ident, Metadata.flow = Processed})
                                     (InitiatedConnection (Connection{lastMessageTime = 0, Connection.uuids = Set.empty}))
-                        _ -> do
+                        _ -> Monad.when (messageId (metadata msg) `notElem` Main.uuids st') $ do
                             let msg' = setVisited Store msg
                             appendMessage msgPath msg'
                             state <- takeMVar stateMV
