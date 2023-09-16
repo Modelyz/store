@@ -18,10 +18,9 @@ import Control.Monad qualified as Monad (forever, when)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
-import Data.List qualified as List
 import Data.Map.Strict as Map (Map, delete, empty, insert)
 import Data.Set as Set (Set, empty, insert)
-import Message (Message (..), Payload (..), appendMessage, creator, getFlow, metadata, payload, readMessages, setVisited)
+import Message (Message (..), Payload (..), addVisited, appendMessage, creator, getFlow, metadata, payload, readMessages)
 import MessageFlow (MessageFlow (..))
 import MessageId (MessageId, messageId)
 import Metadata (Metadata (Metadata), Origin (..), flow, from, uuid, when)
@@ -67,23 +66,23 @@ routeMessage conn client msg = do
                         InitiatedConnection _ -> return ()
                         -- send to ident :
                         AddedIdentifierType _ -> do
-                            WS.sendTextData conn $ JSON.encode msg
-                            putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                            WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+                            putStrLn $ "Sent to " ++ show client ++ " through WS"
                         RemovedIdentifierType _ -> do
-                            WS.sendTextData conn $ JSON.encode msg
-                            putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                            WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+                            putStrLn $ "Sent to " ++ show client ++ " through WS"
                         ChangedIdentifierType _ _ -> do
-                            WS.sendTextData conn $ JSON.encode msg
-                            putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                            WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+                            putStrLn $ "Sent to " ++ show client ++ " through WS"
                         AddedIdentifier _ -> do
-                            WS.sendTextData conn $ JSON.encode msg
-                            putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                            WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+                            putStrLn $ "Sent to " ++ show client ++ " through WS"
                         _ -> return ()
                 _ -> return ()
             Processed -> case creator msg of
                 Studio -> do
-                    WS.sendTextData conn $ JSON.encode msg
-                    putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                    WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+                    putStrLn $ "Sent to " ++ show client ++ " through WS"
                 _ -> return ()
             _ -> return ()
         Studio -> case getFlow msg of
@@ -95,16 +94,16 @@ routeMessage conn client msg = do
                     ChangedIdentifierType _ _ -> return ()
                     AddedIdentifier _ -> return ()
                     _ -> do
-                        WS.sendTextData conn $ JSON.encode msg
-                        putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                        WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+                        putStrLn $ "Sent to " ++ show client ++ " through WS"
                 _ -> return ()
             Processed -> case creator msg of
                 Studio -> do
-                    WS.sendTextData conn $ JSON.encode msg
-                    putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                    WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+                    putStrLn $ "Sent to " ++ show client ++ " through WS"
                 Ident -> do
-                    WS.sendTextData conn $ JSON.encode msg
-                    putStrLn $ "\nSent to " ++ show client ++ " through WS: " ++ show msg
+                    WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+                    putStrLn $ "Sent to " ++ show client ++ " through WS"
                 _ -> return ()
             _ -> return ()
         _ -> return ()
@@ -122,11 +121,10 @@ serverApp msgPath chan stateMV pending_conn = do
         forkIO $
             fix
                 ( \loop -> do
-                    putStrLn "\nWaiting for msg from the chan"
                     msg <- readChan msChan
                     -- store the name of the client in a thread-local MVar
                     client <- readMVar clientMV
-                    putStrLn $ "\n" ++ show client ++ " server thread received msg through the chan: " ++ show msg
+                    putStrLn $ "SERVER WORKER THREAD for " ++ show client ++ " received msg through the chan:\n" ++ show msg
                     routeMessage conn client msg
                     loop
                 )
@@ -135,7 +133,7 @@ serverApp msgPath chan stateMV pending_conn = do
     WS.withPingThread conn 30 (return ()) $
         Monad.forever $ do
             message <- WS.receiveDataMessage conn
-            putStrLn $ "\nReceived msg through websocket: " ++ show message
+            putStrLn $ "SERVER MAIN THREAD received through websocket:\n" ++ show message
             case JSON.eitherDecode
                 ( case message of
                     WS.Text bs _ -> WS.fromLazyByteString bs
@@ -153,21 +151,20 @@ serverApp msgPath chan stateMV pending_conn = do
                             let remoteUuids = Connection.uuids connection
                             messages <- readMessages msgPath
                             let msgs = filter (\e -> (messageId . metadata) e `notElem` remoteUuids) messages
-                            mapM_ (WS.sendTextData conn . JSON.encode) msgs
-                            putStrLn $ "\nSent all missing " ++ show (length msgs) ++ " messages to " ++ show from
+                            mapM_ (WS.sendTextData conn . JSON.encode . addVisited Store) msgs
+                            putStrLn $ "Sent all missing " ++ show (length msgs) ++ " messages to " ++ show from
                             -- send the InitiatedConnection terminaison to signal the sync is over
                             (WS.sendTextData conn . JSON.encode) $
                                 Message
-                                    (Metadata{uuid = uuid $ metadata msg, Metadata.when = when $ metadata msg, Metadata.from = List.singleton Ident, Metadata.flow = Processed})
+                                    (Metadata{uuid = uuid $ metadata msg, Metadata.when = when $ metadata msg, Metadata.from = [Store], Metadata.flow = Processed})
                                     (InitiatedConnection (Connection{lastMessageTime = 0, Connection.uuids = Set.empty}))
                         _ -> Monad.when (messageId (metadata msg) `notElem` Main.uuids st') $ do
-                            let msg' = setVisited Store msg
-                            appendMessage msgPath msg'
+                            appendMessage msgPath msg
                             state <- takeMVar stateMV
-                            putMVar stateMV $! update state msg'
-                            writeChan msChan msg'
-                            putStrLn $ "Writing to the chan: " ++ show msg'
-                Left err -> putStrLn $ "\nError decoding incoming message: " ++ err
+                            putMVar stateMV $! update state msg
+                            writeChan msChan msg
+                            putStrLn "Writing to the chan"
+                Left err -> putStrLn $ "### ERROR ### decoding incoming message:\n" ++ err
 
 update :: State -> Message -> State
 update state msg =
@@ -196,8 +193,7 @@ serve (Options storePath listHost listenPort) = do
     state <- takeMVar stateMV
     let newState = foldl update state msgs -- TODO foldr or strict foldl ?
     putMVar stateMV newState
-    putStrLn "State:"
-    print newState
+    putStrLn $ "STATE:\n" ++ show newState
     -- listen for clients
     putStrLn $ "Modelyz Store, serving from localhost:" ++ show listenPort ++ "/"
     WS.runServerWithOptions WS.defaultServerOptions{WS.serverHost = listHost, WS.serverPort = listenPort} (serverApp storePath chan stateMV)
