@@ -20,7 +20,7 @@ import Data.Aeson qualified as JSON
 import Data.List ()
 import Data.Map.Strict as Map (Map, delete, empty, insert)
 import Data.Set as Set (Set, empty, insert)
-import Message (Message (..), Payload (..), addVisited, appendMessage, creator, getFlow, metadata, payload, readMessages)
+import Message (Message (..), Payload (..), addVisited, appendMessage, creator, dropLastVisited, getFlow, metadata, payload, readMessages)
 import MessageFlow (MessageFlow (..))
 import MessageId (MessageId, messageId)
 import Metadata (Metadata (Metadata), Origin (..), flow, from, uuid, when)
@@ -54,9 +54,24 @@ options =
         <*> strOption (short 'h' <> long "host" <> value "localhost" <> help "Bind socket to this host. [default: localhost]")
         <*> option auto (short 'p' <> long "port" <> metavar "PORT" <> value 8081 <> help "Bind socket to this port.  [default: 8081]")
 
-routeMessage :: WS.Connection -> Client -> Message -> IO ()
-routeMessage conn client msg = do
-    -- route message incoming into store and send to the expected ms
+syncBackMessage :: WS.Connection -> Client -> Message -> IO ()
+syncBackMessage conn client msg = do
+    -- sync back the messages to an empty service
+    case client of
+        Ident -> case payload msg of
+            InitiatedConnection _ -> return ()
+            -- send to ident :
+            AddedIdentifierType _ -> WS.sendTextData conn $ JSON.encode $ dropLastVisited msg
+            RemovedIdentifierType _ -> WS.sendTextData conn $ JSON.encode $ dropLastVisited msg
+            ChangedIdentifierType _ _ -> WS.sendTextData conn $ JSON.encode $ dropLastVisited msg
+            AddedIdentifier _ -> WS.sendTextData conn $ JSON.encode $ dropLastVisited msg
+            _ -> return ()
+        Studio -> WS.sendTextData conn $ JSON.encode $ dropLastVisited msg
+        _ -> return ()
+
+routedMessage :: WS.Connection -> Client -> Message -> IO ()
+routedMessage conn client msg = do
+    -- route message from store to the correct service
     -- client is the currently connected ms
     case client of
         Ident -> case getFlow msg of
@@ -78,11 +93,6 @@ routeMessage conn client msg = do
                             WS.sendTextData conn $ JSON.encode $ addVisited Store msg
                             putStrLn $ "Sent to " ++ show client ++ " through WS"
                         _ -> return ()
-                _ -> return ()
-            Processed -> case creator msg of
-                Studio -> do
-                    WS.sendTextData conn $ JSON.encode $ addVisited Store msg
-                    putStrLn $ "Sent to " ++ show client ++ " through WS"
                 _ -> return ()
             _ -> return ()
         Studio -> case getFlow msg of
@@ -125,7 +135,7 @@ serverApp msgPath chan stateMV pending_conn = do
                     -- store the name of the client in a thread-local MVar
                     client <- readMVar clientMV
                     putStrLn $ "SERVER WORKER THREAD for " ++ show client ++ " received msg through the chan:\n" ++ show msg
-                    routeMessage conn client msg
+                    routedMessage conn client msg
                     loop
                 )
     -- SERVER MAIN THREAD
@@ -151,8 +161,9 @@ serverApp msgPath chan stateMV pending_conn = do
                             let remoteUuids = Connection.uuids connection
                             messages <- readMessages msgPath
                             let msgs = filter (\e -> (messageId . metadata) e `notElem` remoteUuids) messages
-                            mapM_ (WS.sendTextData conn . JSON.encode . addVisited Store) msgs
-                            putStrLn $ "Sent all missing " ++ show (length msgs) ++ " messages to " ++ show from
+                            client <- readMVar clientMV
+                            mapM_ (syncBackMessage conn client) msgs
+                            putStrLn $ "Sent all missing messages to " ++ show from
                             -- send the InitiatedConnection terminaison to signal the sync is over
                             (WS.sendTextData conn . JSON.encode) $
                                 Message
