@@ -20,7 +20,7 @@ import Data.Aeson qualified as JSON
 import Data.List ()
 import Data.Map.Strict as Map (Map, delete, empty, insert)
 import Data.Set as Set (Set, empty, insert)
-import Message (Message (..), Payload (..), addVisited, appendMessage, creator, dropLastVisited, getFlow, metadata, payload, readMessages)
+import Message (Message (..), Payload (..), addVisited, appendMessage, creator, getFlow, metadata, payload, readMessages)
 import MessageFlow (MessageFlow (..))
 import MessageId (MessageId, messageId)
 import Metadata (Metadata (Metadata), Origin (..), flow, from, uuid, when)
@@ -61,12 +61,12 @@ syncBackMessage conn client msg = do
         Ident -> case payload msg of
             InitiatedConnection _ -> return ()
             -- send to ident :
-            AddedIdentifierType _ -> WS.sendTextData conn $ JSON.encode $ dropLastVisited msg
-            RemovedIdentifierType _ -> WS.sendTextData conn $ JSON.encode $ dropLastVisited msg
-            ChangedIdentifierType _ _ -> WS.sendTextData conn $ JSON.encode $ dropLastVisited msg
-            AddedIdentifier _ -> WS.sendTextData conn $ JSON.encode $ dropLastVisited msg
+            AddedIdentifierType _ -> WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+            RemovedIdentifierType _ -> WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+            ChangedIdentifierType _ _ -> WS.sendTextData conn $ JSON.encode $ addVisited Store msg
+            AddedIdentifier _ -> WS.sendTextData conn $ JSON.encode $ addVisited Store msg
             _ -> return ()
-        Studio -> WS.sendTextData conn $ JSON.encode $ dropLastVisited msg
+        Studio -> WS.sendTextData conn $ JSON.encode $ addVisited Store msg
         _ -> return ()
 
 routedMessage :: WS.Connection -> Client -> Message -> IO ()
@@ -99,10 +99,6 @@ routedMessage conn client msg = do
             Requested -> case creator msg of
                 Front -> case payload msg of
                     InitiatedConnection _ -> return ()
-                    AddedIdentifierType _ -> return ()
-                    RemovedIdentifierType _ -> return ()
-                    ChangedIdentifierType _ _ -> return ()
-                    AddedIdentifier _ -> return ()
                     _ -> do
                         WS.sendTextData conn $ JSON.encode $ addVisited Store msg
                         putStrLn $ "Sent to " ++ show client ++ " through WS"
