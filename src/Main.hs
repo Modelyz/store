@@ -20,12 +20,13 @@ import Data.Aeson qualified as JSON
 import Data.List ()
 import Data.Map.Strict as Map (Map, delete, empty, insert)
 import Data.Set as Set (Set, empty, insert)
-import Message (Message (..), Payload (..), addVisited, appendMessage, creator, getFlow, metadata, payload, readMessages)
+import Message (Message (..), addVisited, appendMessage, creator, getFlow, messageId, metadata, payload, readMessages)
 import MessageFlow (MessageFlow (..))
-import MessageId (MessageId, messageId)
+import MessageId (MessageId)
 import Metadata (Metadata (Metadata), flow, from, uuid, when)
 import Network.WebSockets qualified as WS
 import Options.Applicative
+import Payload (Payload (..))
 import Service (Service (..))
 
 -- port, file
@@ -71,8 +72,8 @@ syncBackMessage conn client msg = do
         Studio -> WS.sendTextData conn $ JSON.encode $ addVisited myself msg
         _ -> return ()
 
-routedMessage :: WS.Connection -> Service -> Message -> IO ()
-routedMessage conn client msg = do
+routeMessage :: WS.Connection -> Service -> Message -> IO ()
+routeMessage conn client msg = do
     -- route message from store to the correct service
     -- client is the currently connected ms
     case client of
@@ -97,6 +98,21 @@ routedMessage conn client msg = do
                         _ -> return ()
                 _ -> return ()
             _ -> return ()
+        Dumb -> case getFlow msg of
+            Requested -> case creator msg of
+                Front ->
+                    case payload msg of
+                        InitiatedConnection _ -> return ()
+                        -- send to ident :
+                        AddedIdentifierType _ -> return ()
+                        RemovedIdentifierType _ -> return ()
+                        ChangedIdentifierType _ _ -> return ()
+                        AddedIdentifier _ -> return ()
+                        _ -> do
+                            WS.sendTextData conn $ JSON.encode $ addVisited myself msg
+                            putStrLn $ "Sent to " ++ show client ++ " through WS"
+                _ -> return ()
+            _ -> return ()
         Studio -> case getFlow msg of
             Requested -> case creator msg of
                 Front -> case payload msg of
@@ -106,7 +122,7 @@ routedMessage conn client msg = do
                         putStrLn $ "Sent to " ++ show client ++ " through WS"
                 _ -> return ()
             Processed -> case creator msg of
-                Studio -> do
+                Dumb -> do
                     WS.sendTextData conn $ JSON.encode $ addVisited myself msg
                     putStrLn $ "Sent to " ++ show client ++ " through WS"
                 Ident -> do
@@ -133,7 +149,7 @@ serverApp msgPath chan stateMV pending_conn = do
                     -- store the name of the client in a thread-local MVar
                     client <- readMVar clientMV
                     putStrLn $ "SERVER WORKER THREAD for " ++ show client ++ " received msg through the chan:\n" ++ show msg
-                    routedMessage conn client msg
+                    routeMessage conn client msg
                     loop
                 )
     -- SERVER MAIN THREAD
@@ -158,7 +174,7 @@ serverApp msgPath chan stateMV pending_conn = do
                             putStrLn $ "Connected client: " ++ show from
                             let remoteUuids = Connection.uuids connection
                             messages <- readMessages msgPath
-                            let msgs = filter (\e -> (messageId . metadata) e `notElem` remoteUuids) messages
+                            let msgs = filter (\e -> messageId e `notElem` remoteUuids) messages
                             client <- readMVar clientMV
                             mapM_ (syncBackMessage conn client) msgs
                             putStrLn $ "Sent all missing messages to " ++ show from
@@ -167,7 +183,7 @@ serverApp msgPath chan stateMV pending_conn = do
                                 Message
                                     (Metadata{uuid = uuid $ metadata msg, Metadata.when = when $ metadata msg, Metadata.from = [myself], Metadata.flow = Processed})
                                     (InitiatedConnection (Connection{lastMessageTime = 0, Connection.uuids = Set.empty}))
-                        _ -> Monad.when (messageId (metadata msg) `notElem` Main.uuids st') $ do
+                        _ -> Monad.when (messageId msg `notElem` Main.uuids st') $ do
                             appendMessage msgPath msg
                             state <- takeMVar stateMV
                             putMVar stateMV $! update state msg
@@ -182,13 +198,13 @@ update state msg =
             InitiatedConnection _ -> state
             _ ->
                 state
-                    { pending = Map.insert (messageId (metadata msg)) msg $ pending state
-                    , Main.uuids = Set.insert (messageId $ metadata msg) (Main.uuids state)
+                    { pending = Map.insert (messageId msg) msg $ pending state
+                    , Main.uuids = Set.insert (messageId msg) (Main.uuids state)
                     }
         Processed ->
             state
-                { pending = Map.delete (messageId (metadata msg)) $ pending state
-                , Main.uuids = Set.insert (messageId $ metadata msg) (Main.uuids state)
+                { pending = Map.delete (messageId msg) $ pending state
+                , Main.uuids = Set.insert (messageId msg) (Main.uuids state)
                 }
         Error _ -> state
 
