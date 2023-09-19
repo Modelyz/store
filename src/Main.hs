@@ -69,6 +69,14 @@ syncBackMessage conn client msg = do
             ChangedIdentifierType _ _ -> WS.sendTextData conn $ JSON.encode $ addVisited myself msg
             AddedIdentifier _ -> WS.sendTextData conn $ JSON.encode $ addVisited myself msg
             _ -> return ()
+        Dumb -> case payload msg of
+            InitiatedConnection _ -> return ()
+            -- send to ident :
+            AddedIdentifierType _ -> return ()
+            RemovedIdentifierType _ -> return ()
+            ChangedIdentifierType _ _ -> return ()
+            AddedIdentifier _ -> return ()
+            _ -> WS.sendTextData conn $ JSON.encode $ addVisited myself msg
         Studio -> WS.sendTextData conn $ JSON.encode $ addVisited myself msg
         _ -> return ()
 
