@@ -14,7 +14,7 @@ import Control.Concurrent (
     takeMVar,
     writeChan,
  )
-import Control.Monad qualified as Monad (forever, when)
+import Control.Monad qualified as Monad (forever, unless)
 import Control.Monad.Fix (fix)
 import Data.Aeson qualified as JSON
 import Data.List ()
@@ -150,8 +150,8 @@ serverApp msgPath chan stateMV pending_conn = do
         -- SERVER WORKER THREAD (one per client thread)
         -- wait for new messages coming from other microservices through the chan
         -- and send them to the currently connected microservice
-        forkIO $
-            fix
+        forkIO
+            $ fix
                 ( \loop -> do
                     msg <- readChan msChan
                     -- store the name of the client in a thread-local MVar
@@ -162,8 +162,9 @@ serverApp msgPath chan stateMV pending_conn = do
                 )
     -- SERVER MAIN THREAD
     -- handle message coming through websocket from the currently connected microservice
-    WS.withPingThread conn 30 (return ()) $
-        Monad.forever $ do
+    WS.withPingThread conn 30 (return ())
+        $ Monad.forever
+        $ do
             message <- WS.receiveDataMessage conn
             putStrLn $ "SERVER MAIN THREAD received through websocket:\n" ++ show message
             case JSON.eitherDecode
@@ -181,17 +182,19 @@ serverApp msgPath chan stateMV pending_conn = do
                             putMVar clientMV from
                             putStrLn $ "Connected client: " ++ show from
                             let remoteUuids = Connection.uuids connection
+                            putStrLn $ "Remote uuids: " ++ show remoteUuids
                             messages <- readMessages msgPath
+                            putStrLn $ "messages: " ++ show messages
                             let msgs = filter (\e -> messageId e `notElem` remoteUuids) messages
                             client <- readMVar clientMV
                             mapM_ (syncBackMessage conn client) msgs
                             putStrLn $ "Sent all missing messages to " ++ show from
                             -- send the InitiatedConnection terminaison to signal the sync is over
-                            (WS.sendTextData conn . JSON.encode) $
-                                Message
+                            (WS.sendTextData conn . JSON.encode)
+                                $ Message
                                     (Metadata{uuid = uuid $ metadata msg, Metadata.when = when $ metadata msg, Metadata.from = [myself], Metadata.flow = Processed})
                                     (InitiatedConnection (Connection{lastMessageTime = 0, Connection.uuids = Set.empty}))
-                        _ -> Monad.when (messageId msg `notElem` Main.uuids st') $ do
+                        _ -> Monad.unless (messageId msg `elem` Main.uuids st') $ do
                             appendMessage msgPath msg
                             state <- takeMVar stateMV
                             putMVar stateMV $! update state msg
